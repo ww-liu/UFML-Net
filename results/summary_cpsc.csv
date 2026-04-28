@@ -1,0 +1,2 @@
+experiment,model_name,seed,best_epoch,test_branch1_auc,test_branch1_f1,test_branch2_auc,test_branch2_f1,test_fusion_auc,test_fusion_f1,timestamp,source_file
+exp0,MyNet6View,1,43,0.9588510065156176,0.8207180980106743,0.961893826686218,0.8345463367297428,0.9619899955487268,0.8355167394468704,2026-04-08 18:09:55,results_cpsc.csv
