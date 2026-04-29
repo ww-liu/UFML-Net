@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-@time: 2021/4/15 15:40
 
-@ author:
-"""
 import warnings
 import torch.nn.functional as F
 import torch
