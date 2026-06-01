@@ -2,11 +2,11 @@ import os
 import numpy as np
 import scipy.io as sio
 from scipy.signal import resample
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 import torch
 from sklearn.preprocessing import MultiLabelBinarizer, StandardScaler
 from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 import pywt
 from config import config
@@ -269,6 +269,67 @@ def save_data(datafolder):
     np.save(os.path.join(datafolder, 'labels2.npy'), labels)
 
 
+def _split_cpsc_data(data, labels):
+    label_ids = np.asarray(labels).reshape(-1)
+    seed = getattr(config, 'seed', 42)
+    indices = np.arange(len(data))
+    if getattr(config, 'cpsc_use_stratified_split', True):
+        try:
+            train_idx, temp_idx = train_test_split(
+                indices,
+                test_size=0.2,
+                random_state=seed,
+                stratify=label_ids
+            )
+            val_idx, test_idx = train_test_split(
+                temp_idx,
+                test_size=0.5,
+                random_state=seed,
+                stratify=label_ids[temp_idx]
+            )
+            return train_idx, val_idx, test_idx
+        except ValueError as exc:
+            print(f'CPSC stratified split fallback to random split: {exc}')
+
+    rng = np.random.RandomState(seed)
+    shuffle_ix = rng.permutation(indices)
+    data_num = len(data)
+    train_idx = shuffle_ix[:int(data_num * 0.8)]
+    val_idx = shuffle_ix[int(data_num * 0.8):int(data_num * 0.9)]
+    test_idx = shuffle_ix[int(data_num * 0.9):]
+    return train_idx, val_idx, test_idx
+
+
+def _print_cpsc_split_summary(labels, train_idx, val_idx, test_idx):
+    if not getattr(config, 'print_cpsc_split_summary', True):
+        return
+    label_ids = np.asarray(labels).reshape(-1)
+    classes = sorted(np.unique(label_ids).tolist())
+    parts = [('train', train_idx), ('val', val_idx), ('test', test_idx)]
+    print('CPSC split summary:')
+    for name, idx in parts:
+        counts = {int(cls): int(np.sum(label_ids[idx] == cls)) for cls in classes}
+        print(f'  {name}: n={len(idx)}, class_counts={counts}')
+
+
+def _build_cpsc_train_loader(x_train, y_train, batch_size):
+    dataset = ECGDataset(x_train, y_train, is_train=True)
+    if not getattr(config, 'cpsc_use_weighted_sampler', False):
+        return DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True)
+
+    class_ids = np.argmax(y_train, axis=1)
+    class_counts = np.bincount(class_ids, minlength=y_train.shape[1]).astype(np.float32)
+    class_counts[class_counts == 0] = 1.0
+    class_weights = 1.0 / np.sqrt(class_counts)
+    sample_weights = class_weights[class_ids]
+    sampler = WeightedRandomSampler(
+        weights=torch.as_tensor(sample_weights, dtype=torch.double),
+        num_samples=len(sample_weights),
+        replacement=True
+    )
+    return DataLoader(dataset=dataset, batch_size=batch_size, sampler=sampler)
+
+
 def load_data(batch_size, datafolder=None):
     if datafolder is None:
         datafolder = os.getcwd()
@@ -279,22 +340,28 @@ def load_data(batch_size, datafolder=None):
         save_data(datafolder)
 
     data, labels = np.load(data_file), np.load(label_file)
+    train_idx, val_idx, test_idx = _split_cpsc_data(data, labels)
+    _print_cpsc_split_summary(labels, train_idx, val_idx, test_idx)
     labels = [list(set([label])) for label in labels]
-    data_num = len(data)
-    shuffle_ix = np.random.permutation(np.arange(data_num))
     mlb = MultiLabelBinarizer(classes=[1, 2, 3, 4, 5, 6, 7, 8, 9])
     labels = mlb.fit_transform(labels)
-    data = data[shuffle_ix]
-    labels = labels[shuffle_ix]
-    x_train = data[:int(data_num * 0.8)]
-    x_val = data[int(data_num * 0.8):int(data_num * 0.9)]
-    x_test = data[int(data_num * 0.9):]
+    x_train = data[train_idx]
+    x_val = data[val_idx]
+    x_test = data[test_idx]
     x_train, x_val, x_test = preprocess_signals(x_train, x_val, x_test)
-    y_train = labels[:int(data_num * 0.8)]
-    y_val = labels[int(data_num * 0.8):int(data_num * 0.9)]
-    y_test = labels[int(data_num * 0.9):]
+    y_train = labels[train_idx]
+    y_val = labels[val_idx]
+    y_test = labels[test_idx]
+    print(
+        'CPSC split class counts - train:',
+        y_train.sum(axis=0).astype(int).tolist(),
+        'val:',
+        y_val.sum(axis=0).astype(int).tolist(),
+        'test:',
+        y_test.sum(axis=0).astype(int).tolist()
+    )
     # x_train, x_val, x_test, y_train, y_val, y_test = cross_validation_splits(data, labels)
-    train_loader = DataLoader(dataset=ECGDataset(x_train, y_train, is_train=True), batch_size=batch_size, shuffle=True)
+    train_loader = _build_cpsc_train_loader(x_train, y_train, batch_size)
     val_loader = DataLoader(dataset=ECGDataset(x_val, y_val, is_train=False), batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(dataset=ECGDataset(x_test, y_test, is_train=False), batch_size=batch_size, shuffle=False)
     return train_loader, val_loader, test_loader
