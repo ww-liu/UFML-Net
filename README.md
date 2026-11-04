@@ -6,7 +6,6 @@ The framework combines local morphology and global rhythm branches with input-ad
 
 ## Environment
 
-Main packages in the server's `mrm_net` environment:
 
 | Package | Version |
 |---|---|
