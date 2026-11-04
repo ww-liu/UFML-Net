@@ -20,3 +20,18 @@ Thumbs.db
 # local result tables
 results.csv
 training_log*.csv
+
+# Local datasets and Python environments
+data/
+datasets/
+dataset/
+ptbxl/
+raw/
+.venv/
+venv/
+.env
+.env.*
+
+# Editor files
+.idea/
+.vscode/
